@@ -1,0 +1,642 @@
+CLASS lhc_Employee DEFINITION INHERITING FROM cl_abap_behavior_handler.
+  PRIVATE SECTION.
+
+    METHODS get_instance_authorizations FOR INSTANCE AUTHORIZATION
+      keys REQUEST requested_authorizations FOR Employee RESULT result.
+
+    METHODS get_global_authorizations FOR GLOBAL AUTHORIZATION
+      REQUEST requested_authorizations FOR Employee RESULT result.
+
+    METHODS validateEmployee FOR VALIDATE ON SAVE
+       keys FOR Employee~validateEmployee.
+
+    METHODS generateEmployeeID FOR DETERMINE ON MODIFY
+    IMPORTING keys FOR Employee~generateEmployeeID.
+
+ENDCLASS.
+
+CLASS lhc_Employee IMPLEMENTATION.
+
+  METHOD get_instance_authorizations.
+
+  LOOP AT keys ASSIGNING FIELD-SYMBOL(<key>).
+
+    APPEND VALUE #(
+      %tky    = <key>-%tky
+      %update = if_abap_behv=>auth-allowed
+      %delete = if_abap_behv=>auth-allowed
+    ) TO result.
+
+  ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD get_global_authorizations.
+
+  "Allow employee creation
+  IF requested_authorizations-%create = if_abap_behv=>mk-on.
+
+    result-%create = if_abap_behv=>auth-allowed.
+
+  ENDIF.
+
+  ENDMETHOD.
+
+
+METHOD generateEmployeeID.
+
+  "Read the newly created employee instances
+  READ ENTITIES OF zi_employee_29 IN LOCAL MODE
+    ENTITY Employee
+    FIELDS ( EmployeeID )
+    WITH CORRESPONDING #( keys )
+    RESULT DATA(lt_employees).
+
+  IF lt_employees IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  "Find the highest existing Employee ID
+  DATA lv_max_employee_id TYPE zemployee_29-employee_id.
+
+  SELECT MAX( employee_id )
+    FROM zemployee_29
+    WHERE employee_id LIKE 'E%'
+    INTO @lv_max_employee_id.
+
+  "Calculate the next numeric ID
+  DATA lv_next_number TYPE i.
+
+  IF lv_max_employee_id IS INITIAL.
+    lv_next_number = 1.
+  ELSE.
+    lv_next_number =
+      CONV i( lv_max_employee_id+1(4) ) + 1.
+  ENDIF.
+
+  LOOP AT lt_employees ASSIGNING FIELD-SYMBOL(<employee>).
+
+    "Generate an ID only if it is currently empty
+    IF <employee>-EmployeeID IS INITIAL.
+
+      "Check the four-digit limit
+      IF lv_next_number > 9999.
+
+        CONTINUE.
+
+      ENDIF.
+
+      "Convert number to four digits (0001, 0002, etc.)
+      DATA lv_number_text TYPE n LENGTH 4.
+      lv_number_text = lv_next_number.
+
+      "Build Employee ID
+      DATA(lv_new_employee_id) =
+        |E{ lv_number_text }|.
+
+      "Update Employee ID in RAP buffer
+      MODIFY ENTITIES OF zi_employee_29 IN LOCAL MODE
+        ENTITY Employee
+        UPDATE FIELDS ( EmployeeID )
+        WITH VALUE #(
+          (
+            %tky       = <employee>-%tky
+            EmployeeID = lv_new_employee_id
+          )
+        ).
+
+      "Increment for the next employee in this request
+      lv_next_number = lv_next_number + 1.
+
+    ENDIF.
+
+  ENDLOOP.
+
+ENDMETHOD.
+
+METHOD validateEmployee.
+
+TYPES:
+  BEGIN OF ty_existing,
+    employee_uuid TYPE zemployee_29-employee_uuid,
+    employee_id   TYPE zemployee_29-employee_id,
+    email         TYPE zemployee_29-email,
+    phone         TYPE zemployee_29-phone,
+  END OF ty_existing.
+
+  DATA:
+    lt_existing TYPE STANDARD TABLE OF ty_existing,
+    lv_email    TYPE string,
+    lv_phone    TYPE string,
+    lv_db_email TYPE string,
+    lv_db_phone TYPE string,
+    lv_digits   TYPE string,
+    lv_has_error TYPE abap_bool.
+
+  READ ENTITIES OF zi_employee_29 IN LOCAL MODE
+    ENTITY Employee
+    FIELDS (
+      EmployeeUUID
+      EmployeeID
+      FirstName
+      LastName
+      Email
+      Phone
+      Status
+      HireDate
+    )
+    WITH CORRESPONDING #( keys )
+    RESULT DATA(lt_employee).
+
+  IF lt_employee IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  "Read persisted records once
+  SELECT employee_uuid,
+         employee_id,
+         email,
+         phone
+    FROM zemployee_29
+    INTO TABLE @lt_existing.
+
+  DATA(lv_system_date) =
+    cl_abap_context_info=>get_system_date( ).
+
+  LOOP AT lt_employee ASSIGNING FIELD-SYMBOL(<employee>).
+
+    CLEAR:
+      lv_has_error,
+      lv_email,
+      lv_phone.
+
+    "--------------------------------------------------
+    " EMPLOYEE ID VALIDATION
+    "--------------------------------------------------
+
+    IF <employee>-EmployeeID IS INITIAL.
+
+      lv_has_error = abap_true.
+
+      APPEND VALUE #(
+        %tky = <employee>-%tky
+        %msg = new_message_with_text(
+          severity = if_abap_behv_message=>severity-error
+          text = 'Employee ID is required'
+        )
+        %element-EmployeeID = if_abap_behv=>mk-on
+      ) TO reported-employee.
+
+    ELSE.
+
+      LOOP AT lt_existing ASSIGNING FIELD-SYMBOL(<db>)
+        WHERE employee_id = <employee>-EmployeeID
+          AND employee_uuid <> <employee>-EmployeeUUID.
+
+        lv_has_error = abap_true.
+
+        APPEND VALUE #(
+          %tky = <employee>-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'Employee ID already exists'
+          )
+          %element-EmployeeID = if_abap_behv=>mk-on
+        ) TO reported-employee.
+
+        EXIT.
+
+      ENDLOOP.
+
+      LOOP AT lt_employee ASSIGNING FIELD-SYMBOL(<other>)
+        WHERE EmployeeID = <employee>-EmployeeID
+          AND EmployeeUUID <> <employee>-EmployeeUUID.
+
+        lv_has_error = abap_true.
+
+        APPEND VALUE #(
+          %tky = <employee>-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'Duplicate Employee ID in request'
+          )
+          %element-EmployeeID = if_abap_behv=>mk-on
+        ) TO reported-employee.
+
+        EXIT.
+
+      ENDLOOP.
+
+    ENDIF.
+
+    "--------------------------------------------------
+    " FIRST NAME
+    "--------------------------------------------------
+
+    IF <employee>-FirstName IS INITIAL.
+
+      lv_has_error = abap_true.
+
+      APPEND VALUE #(
+        %tky = <employee>-%tky
+        %msg = new_message_with_text(
+          severity = if_abap_behv_message=>severity-error
+          text = 'First name is required'
+        )
+        %element-FirstName = if_abap_behv=>mk-on
+      ) TO reported-employee.
+
+    ENDIF.
+
+    "--------------------------------------------------
+    " LAST NAME
+    "--------------------------------------------------
+
+    IF <employee>-LastName IS INITIAL.
+
+      lv_has_error = abap_true.
+
+      APPEND VALUE #(
+        %tky = <employee>-%tky
+        %msg = new_message_with_text(
+          severity = if_abap_behv_message=>severity-error
+          text = 'Last name is required'
+        )
+        %element-LastName = if_abap_behv=>mk-on
+      ) TO reported-employee.
+
+    ENDIF.
+
+    "--------------------------------------------------
+    " EMAIL VALIDATION
+    "--------------------------------------------------
+
+    lv_email = <employee>-Email.
+
+    CONDENSE lv_email.
+    TRANSLATE lv_email TO LOWER CASE.
+
+    IF lv_email IS INITIAL.
+
+      lv_has_error = abap_true.
+
+      APPEND VALUE #(
+        %tky = <employee>-%tky
+        %msg = new_message_with_text(
+          severity = if_abap_behv_message=>severity-error
+          text = 'Email address is required'
+        )
+        %element-Email = if_abap_behv=>mk-on
+      ) TO reported-employee.
+
+    ELSE.
+
+      FIND REGEX
+        '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+        IN lv_email.
+
+      IF sy-subrc <> 0.
+
+        lv_has_error = abap_true.
+
+        APPEND VALUE #(
+          %tky = <employee>-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'Enter a valid email address'
+          )
+          %element-Email = if_abap_behv=>mk-on
+        ) TO reported-employee.
+
+      ENDIF.
+
+      "Check existing database records
+      LOOP AT lt_existing ASSIGNING <db>.
+
+        IF <db>-employee_uuid = <employee>-EmployeeUUID.
+          CONTINUE.
+        ENDIF.
+
+        lv_db_email = <db>-email.
+
+        CONDENSE lv_db_email.
+        TRANSLATE lv_db_email TO LOWER CASE.
+
+        IF lv_email = lv_db_email.
+
+          lv_has_error = abap_true.
+
+          APPEND VALUE #(
+            %tky = <employee>-%tky
+            %msg = new_message_with_text(
+              severity = if_abap_behv_message=>severity-error
+              text = 'Email address already exists'
+            )
+            %element-Email = if_abap_behv=>mk-on
+          ) TO reported-employee.
+
+          EXIT.
+
+        ENDIF.
+
+      ENDLOOP.
+
+      "Check duplicates within current RAP request
+      LOOP AT lt_employee ASSIGNING FIELD-SYMBOL(<email_other>).
+
+        IF <email_other>-EmployeeUUID =
+           <employee>-EmployeeUUID.
+          CONTINUE.
+        ENDIF.
+
+        DATA(lv_other_email) = CONV string(
+          <email_other>-Email ).
+
+        CONDENSE lv_other_email.
+        TRANSLATE lv_other_email TO LOWER CASE.
+
+        IF lv_email = lv_other_email
+           AND lv_email IS NOT INITIAL.
+
+          lv_has_error = abap_true.
+
+          APPEND VALUE #(
+            %tky = <employee>-%tky
+            %msg = new_message_with_text(
+              severity = if_abap_behv_message=>severity-error
+              text = 'Duplicate email address in request'
+            )
+            %element-Email = if_abap_behv=>mk-on
+          ) TO reported-employee.
+
+          EXIT.
+
+        ENDIF.
+
+      ENDLOOP.
+
+    ENDIF.
+
+    "--------------------------------------------------
+    " PHONE VALIDATION
+    "--------------------------------------------------
+
+    lv_phone = <employee>-Phone.
+
+    "Remove spaces and formatting characters
+    REPLACE ALL OCCURRENCES OF REGEX '[^0-9]'
+      IN lv_phone WITH ''.
+
+    IF lv_phone IS INITIAL.
+
+      lv_has_error = abap_true.
+
+      APPEND VALUE #(
+        %tky = <employee>-%tky
+        %msg = new_message_with_text(
+          severity = if_abap_behv_message=>severity-error
+          text = 'Phone number is required'
+        )
+        %element-Phone = if_abap_behv=>mk-on
+      ) TO reported-employee.
+
+    ELSEIF strlen( lv_phone ) < 7
+        OR strlen( lv_phone ) > 15.
+
+      lv_has_error = abap_true.
+
+      APPEND VALUE #(
+        %tky = <employee>-%tky
+        %msg = new_message_with_text(
+          severity = if_abap_behv_message=>severity-error
+          text = 'Phone number must contain 7 to 15 digits'
+        )
+        %element-Phone = if_abap_behv=>mk-on
+      ) TO reported-employee.
+
+    ELSE.
+
+      "Check persisted phone numbers
+      LOOP AT lt_existing ASSIGNING <db>.
+
+        IF <db>-employee_uuid = <employee>-EmployeeUUID.
+          CONTINUE.
+        ENDIF.
+
+        lv_db_phone = <db>-phone.
+
+        REPLACE ALL OCCURRENCES OF REGEX '[^0-9]'
+          IN lv_db_phone WITH ''.
+
+        IF lv_phone = lv_db_phone.
+
+          lv_has_error = abap_true.
+
+          APPEND VALUE #(
+            %tky = <employee>-%tky
+            %msg = new_message_with_text(
+              severity = if_abap_behv_message=>severity-error
+              text = 'Phone number already exists'
+            )
+            %element-Phone = if_abap_behv=>mk-on
+          ) TO reported-employee.
+
+          EXIT.
+
+        ENDIF.
+
+      ENDLOOP.
+
+      "Check current RAP request
+      LOOP AT lt_employee ASSIGNING FIELD-SYMBOL(<phone_other>).
+
+        IF <phone_other>-EmployeeUUID =
+           <employee>-EmployeeUUID.
+          CONTINUE.
+        ENDIF.
+
+        DATA(lv_other_phone) = CONV string(
+          <phone_other>-Phone ).
+
+        REPLACE ALL OCCURRENCES OF REGEX '[^0-9]'
+          IN lv_other_phone WITH ''.
+
+        IF lv_phone = lv_other_phone
+           AND lv_phone IS NOT INITIAL.
+
+          lv_has_error = abap_true.
+
+          APPEND VALUE #(
+            %tky = <employee>-%tky
+            %msg = new_message_with_text(
+              severity = if_abap_behv_message=>severity-error
+              text = 'Duplicate phone number in request'
+            )
+            %element-Phone = if_abap_behv=>mk-on
+          ) TO reported-employee.
+
+          EXIT.
+
+        ENDIF.
+
+      ENDLOOP.
+
+    ENDIF.
+
+    "--------------------------------------------------
+    " STATUS VALIDATION
+    "--------------------------------------------------
+
+    IF <employee>-Status IS INITIAL
+       OR ( <employee>-Status <> 'A'
+            AND <employee>-Status <> 'I' ).
+
+      lv_has_error = abap_true.
+
+      APPEND VALUE #(
+        %tky = <employee>-%tky
+        %msg = new_message_with_text(
+          severity = if_abap_behv_message=>severity-error
+          text = 'Status must be A or I'
+        )
+        %element-Status = if_abap_behv=>mk-on
+      ) TO reported-employee.
+
+    ENDIF.
+
+
+"--------------------------------------------------
+" HIRE DATE VALIDATION
+"--------------------------------------------------
+
+DATA:
+  lv_year       TYPE i,
+  lv_month      TYPE i,
+  lv_day        TYPE i,
+  lv_days_month TYPE i,
+  lv_valid_date TYPE abap_bool,
+  lv_leap_year  TYPE abap_bool.
+
+lv_valid_date = abap_true.
+
+"Reject initial / dummy date
+IF <employee>-HireDate IS INITIAL
+   OR <employee>-HireDate = '00000000'.
+
+  lv_valid_date = abap_false.
+
+ELSE.
+
+  "Ensure date contains exactly numeric characters
+  IF <employee>-HireDate CN '0123456789'.
+
+    lv_valid_date = abap_false.
+
+  ELSE.
+
+    "Extract year, month and day
+    lv_year  = CONV i( <employee>-HireDate(4) ).
+    lv_month = CONV i( <employee>-HireDate+4(2) ).
+    lv_day   = CONV i( <employee>-HireDate+6(2) ).
+
+    "Validate year and month
+    IF lv_year < 1 OR lv_month < 1 OR lv_month > 12.
+
+      lv_valid_date = abap_false.
+
+    ELSE.
+
+      "Determine maximum days in month
+      CASE lv_month.
+
+        WHEN 1 OR 3 OR 5 OR 7 OR 8 OR 10 OR 12.
+          lv_days_month = 31.
+
+        WHEN 4 OR 6 OR 9 OR 11.
+          lv_days_month = 30.
+
+        WHEN 2.
+
+          "Leap year calculation
+          IF lv_year MOD 400 = 0
+             OR ( lv_year MOD 4 = 0
+                  AND lv_year MOD 100 <> 0 ).
+
+            lv_leap_year = abap_true.
+            lv_days_month = 29.
+
+          ELSE.
+
+            lv_leap_year = abap_false.
+            lv_days_month = 28.
+
+          ENDIF.
+
+      ENDCASE.
+
+      "Validate day
+      IF lv_day < 1 OR lv_day > lv_days_month.
+
+        lv_valid_date = abap_false.
+
+      ENDIF.
+
+    ENDIF.
+
+  ENDIF.
+
+ENDIF.
+
+"Report invalid calendar date
+IF lv_valid_date = abap_false.
+
+  lv_has_error = abap_true.
+
+  APPEND VALUE #(
+    %tky = <employee>-%tky
+    %msg = new_message_with_text(
+      severity = if_abap_behv_message=>severity-error
+      text = 'Enter a valid hire date. Dummy or invalid dates are not allowed'
+    )
+    %element-HireDate = if_abap_behv=>mk-on
+  ) TO reported-employee.
+
+ELSE.
+
+  "Reject future hire dates
+  IF <employee>-HireDate > lv_system_date.
+
+    lv_has_error = abap_true.
+
+    APPEND VALUE #(
+      %tky = <employee>-%tky
+      %msg = new_message_with_text(
+        severity = if_abap_behv_message=>severity-error
+        text = 'Hire date cannot be in the future'
+      )
+      %element-HireDate = if_abap_behv=>mk-on
+    ) TO reported-employee.
+
+  ENDIF.
+
+ENDIF.
+
+    "--------------------------------------------------
+    " MARK FAILED INSTANCE
+    "--------------------------------------------------
+
+    IF lv_has_error = abap_true.
+
+      APPEND VALUE #(
+        %tky = <employee>-%tky
+      ) TO failed-employee.
+
+    ENDIF.
+
+  ENDLOOP.
+
+ENDMETHOD.
+
+ENDCLASS.
+
+

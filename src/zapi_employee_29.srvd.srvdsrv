@@ -1,0 +1,4 @@
+@EndUserText.label: 'Employee API Service'
+define service ZAPI_EMPLOYEE_29 {
+  expose ZC_EMPLOYEE_29 as Employee;
+}

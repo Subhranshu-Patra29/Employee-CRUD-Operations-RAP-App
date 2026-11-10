@@ -1,0 +1,52 @@
+managed implementation in class zbp_i_employee_29 unique;
+strict ( 2 );
+
+define behavior for ZI_EMPLOYEE_29 alias Employee
+persistent table zemployee_29
+lock master
+authorization master ( instance )
+
+//etag master <field_name>
+{
+  create ( authorization : global );
+  update;
+  delete;
+  field ( readonly, numbering : managed ) EmployeeUUID;
+  field (readonly) EmployeeID,
+  CreatedBy,
+  CreatedAt,
+  LastChangedBy,
+  LastChangedAt,
+  LocalLastChangedAt;
+
+  validation validateEmployee on save
+  {
+  create;
+  update;
+  }
+
+  determination generateEmployeeID on modify
+  {
+    create;
+  }
+
+  mapping for zemployee_29
+  {
+    EmployeeUUID        = employee_uuid;
+    EmployeeID          = employee_id;
+    FirstName           = first_name;
+    LastName            = last_name;
+    Email               = email;
+    Phone               = phone;
+    Department          = department;
+    JobTitle            = job_title;
+    HireDate            = hire_date;
+    Status              = status;
+    CreatedBy           = created_by;
+    CreatedAt           = created_at;
+    LastChangedBy       = last_changed_by;
+    LastChangedAt       = last_changed_at;
+    LocalLastChangedAt  = local_last_changed_at;
+  }
+
+}
