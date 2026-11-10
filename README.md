@@ -246,23 +246,6 @@ The repository contains the ABAP object definitions and implementation
 code, along with the documented build sequence and example OData
 requests/responses.
 
-Suggested organization when maintaining the repository:
-
-``` text
-SAP-RAP-Employee-CRUD/
-├── README.md
-├── src/
-│   ├── database/
-│   ├── cds/
-│   ├── behavior/
-│   └── service/
-└── screenshots/
-```
-
-The structure above is a suggested organization for exported source
-files; it does not imply that every folder is already present in the
-repository.
-
 ## Testing
 
 The documented API examples cover:
@@ -276,21 +259,3 @@ Also test validation scenarios, including missing required fields,
 malformed email addresses, duplicate email/phone values, invalid status
 values, invalid dates, and future hire dates.
 
-## Notes and Limitations
-
--   The service binding's exact URL, protocol configuration, and
-    authentication requirements are system-specific.
--   Authorization currently permits create, update, and delete
-    operations; production deployments should implement proper access
-    restrictions.
--   Employee ID generation uses a read-maximum-and-increment approach.
-    For concurrent production workloads, consider a concurrency-safe
-    number range or another collision-safe numbering strategy.
--   No frontend UI is included in the documented scope; the application
-    is exposed as an OData API.
-
-## License
-
-No license is specified in this repository. Add a `LICENSE` file if you
-intend to distribute or reuse the project under a particular open-source
-license.
